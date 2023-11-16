@@ -1,8 +1,7 @@
-﻿using Telegram.Bot;
-using NLog;
-using System.Configuration;
+﻿using NLog;
 using System.Globalization;
-using NLog.Targets;
+using System.Xml;
+using Telegram.Bot;
 
 namespace ClientBot
 {
@@ -17,21 +16,35 @@ namespace ClientBot
             var logger = NLog.LogManager.GetCurrentClassLogger();
             logger.Info("Запуск программы");
             logger.Info("Установка подключения к Телеграмм");
-            string botToken = "6750292932:AAHj1dabVpBl2VTyu21O3G0nAQOvB3F3Q70";
-            TelegramBotClient botClient = new TelegramBotClient(botToken);           
+            string botToken = "Bot_token"; //Необходимо заменить на действительное значение токена телеграм-бота
+            TelegramBotClient botClient = new TelegramBotClient(botToken);
             var client = (TelegramBotClient)botClient;
+            
 
-            logger.Info("Считывание установок таймера проверок");
-            string checkPoints = ConfigurationManager.AppSettings.Get("timePointsCheck");
+            string fileName = "user_config.xml";
+            
+
+            string? checkPoints;
+            string lastCheck;
+            XmlDocument xmlDoc = new XmlDocument();
+            xmlDoc.Load(fileName);
+            XmlNode lastCheckNode = xmlDoc.SelectSingleNode("/Root/lastCheck");
+            lastCheck = lastCheckNode.InnerText;
+            XmlNode timerNode = xmlDoc.SelectSingleNode("/Root/Timer");
+            checkPoints = timerNode.InnerText;
+
+            logger.Info("Считывание установок таймера проверок");            
             logger.Info(checkPoints);
             string[] checkPoinsArray = checkPoints.Split(", ");
-            List<DateTime> checkPointsList = new List<DateTime>();
-
+            List<DateTime> checkPointsList = new List<DateTime>();           
+            logger.Info($"Время последней проверки {lastCheck}");
             foreach (string point in checkPoinsArray)
             {
                 DateTime dateTime = DateTime.ParseExact(point, "H:mm", CultureInfo.InvariantCulture);
                 checkPointsList.Add(dateTime);
             }
+
+            checkPointsList.Sort();
 
             DateTime time = DateTime.Now;
 
@@ -41,50 +54,50 @@ namespace ClientBot
                 {
                     if (time.Hour == checkPoint.Hour && time.Minute == checkPoint.Minute)
                     {
+                        
                         logger.Info("Совпадение текущего времени с таймером проверок");
-                        //Считываем дату и время последней проверки
-                        string lastCheck = ConfigurationManager.AppSettings.Get("lasrCheckDateTime");
-                        logger.Info("Время последней проверки: " + lastCheck);
-                        DateTime lastCheckDateTime = DateTime.Parse(ConfigurationManager.AppSettings.Get("lasrCheckDateTime"));
+                        lastCheckNode = xmlDoc.SelectSingleNode("/Root/lastCheck");
+                        lastCheck = lastCheckNode.InnerText;
+                        DateTime lastCheckDateTime = DateTime.Parse(lastCheck);
 
                         logger.Info("Начало проверки наличия ошибок");
-                        string errorMessages = $"Application:\n {Errors.ErrorsApp(lastCheckDateTime)}\n\n\n\nSystem:\n {Errors.ErrorsSys(lastCheckDateTime)}";
+                        string errorMessages = $"Application:\n {Errors.ErrorsApp(lastCheckDateTime)}\n\n\n\nSystem:\n {Errors.ErrorsSys(lastCheckDateTime)}";                       
+                        // Установите новое значение для "lastCheck"
+                        lastCheck = time.ToString();
+                        lastCheckNode.InnerText = lastCheck;
 
-                        logger.Info("Обновление времени последней проверки");
-                        Configuration config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
-                        AppSettingsSection appSettings = (AppSettingsSection)config.GetSection("appSettings");
-                        appSettings.Settings["lasrCheckDateTime"].Value = time.ToString();
-                        config.Save(ConfigurationSaveMode.Modified);
-                        ConfigurationManager.RefreshSection("appSettings");
+                        // Сохраните изменения в XML файле
+                        xmlDoc.Save(fileName);
 
-                        
-                        
                         if (Errors.ErrorsApp(lastCheckDateTime) != "")
                         {
                             logger.Info("Найдены новые ошибки Application. Отправка сообщения с ошибками.");
-                            await client.SendTextMessageAsync("@ErrorMes", $"Application:\n {Errors.ErrorsApp(lastCheckDateTime)}");
+                            await client.SendTextMessageAsync("group_identifikator", $"Application:\n {Errors.ErrorsApp(lastCheckDateTime)}");//Необходимо заменить group_identifikator на идентификатор группы в телеграмм
                         }
 
                         if (Errors.ErrorsSys(lastCheckDateTime) != "")
                         {
                             logger.Info("Найдены новые ошибки System. Отправка сообщения с ошибками.");
-                            await client.SendTextMessageAsync("@ErrorMes", $"System:\n {Errors.ErrorsSys(lastCheckDateTime)}");
+                            await client.SendTextMessageAsync("group_identifikator", $"System:\n {Errors.ErrorsSys(lastCheckDateTime)}");//Необходимо заменить group_identifikator на идентификатор группы в телеграмм
                         }
                         if (Errors.ErrorsApp(lastCheckDateTime) == "" && Errors.ErrorsSys(lastCheckDateTime) == "")
                         {
-                            logger.Info("Проверка окончена. Новых ошибок не обнаружено.");
-                            await client.SendTextMessageAsync("@ErrorMes", "Новых ошибок нет");
+                            logger.Info($"Проверка окончена. Новых ошибок не обнаружено. Новое значение времени последней проверки  {lastCheck}");                           
                         }
                         break;
                     }
+                    
+                }
+                if (DateTime.Now.TimeOfDay > checkPointsList[^1].TimeOfDay) 
+                {
+                    logger.Info("Все запланированные проверки выполнены. Закрытие программы.");
+                    Environment.Exit(0); 
                 }
                 Thread.Sleep(30000);
                 time = DateTime.Now;
             }
 
         }
-
-        
     }
 }
 
